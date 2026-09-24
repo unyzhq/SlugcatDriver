@@ -1,8 +1,8 @@
 {
-    "id": "yourname.yourmodname",
-    "name": "Your Mod Name",
+    "id": "unyzhq.SlugcatDriver",
+    "name": "Slugcat Driver",
     "version": "0.1.0",
-    "authors": "Your Name",
+    "authors": "unyzhq",
     "description": "This is a Rain World mod template",
     "requirements": [],
     "requirements_names": [],
