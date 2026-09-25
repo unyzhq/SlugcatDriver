@@ -10,7 +10,7 @@ using UnityEngine;
 
 namespace SlugcatDriver {
 	[BepInPlugin(PLUGIN_GUID, PLUGIN_NAME, PLUGIN_VERSION)]
-	public class SlugcatDriver : BaseUnityPlugin
+	public class SlugcatDriverPlugin : BaseUnityPlugin
 	{
 		public const string PLUGIN_GUID = "unyzhq.SlugcatDriver";
 		public const string PLUGIN_NAME = "Slugcat Driver";
@@ -26,7 +26,9 @@ namespace SlugcatDriver {
 			ConsoleManager console = gameObject.GetComponent<ConsoleManager>();
             if (console == null) console = gameObject.AddComponent<ConsoleManager>();
 
+			console.SetLogMessage(message => Logger.LogMessage(message));
 			console.SetLogInfo(message => Logger.LogInfo(message));
+			console.SetLogDebug(message => Logger.LogDebug(message));
 			console.SetLogWarning(message => Logger.LogWarning(message));
 			console.SetLogError(message => Logger.LogError(message));
 
@@ -38,6 +40,9 @@ namespace SlugcatDriver {
                 "打开/关闭控制台的按键"
             );
 
+			var shortcut = _toggleConsoleKey.Value;
+    		console.SetToggleKey(shortcut.MainKey);
+
 
 		}
 
@@ -47,11 +52,10 @@ namespace SlugcatDriver {
             var shortcut = _toggleConsoleKey?.Value;
             if (shortcut == null) return;
 
-            if (shortcut.Value.IsDown())
-            {
-                ConsoleManager.Instance?.Toggle();
-            }
+            if (shortcut.Value.IsDown() && ConsoleManager.Instance != null)
+			{
+				ConsoleManager.Instance.Toggle();
+			}
         }
-
 	}
 }

@@ -15,20 +15,28 @@ namespace SlugcatDriver.Tool
             // 注册内置指令
             Register("help", (args, con) =>
             {
-                con.Log("可用指令：");
                 foreach (var key in _commands.Keys)
-                    con.Log($"  {key}");
+                    con.LogInfo($"{key}");
             });
 
             Register("echo", (args, con) =>
             {
-                con.Log(string.Join(" ", args));
+                con.LogInfo(string.Join(" ", args));
             });
 
             Register("clear", (args, con) =>
             {
                 // 需要 ConsoleManager 暴露一个 Clear 方法
                 con.Clear();
+            });
+
+            Register("color", (args, con) =>
+            {
+                con.LogMessage("message");
+                con.LogInfo("info");
+                con.LogDebug("debug");
+                con.LogWarning("warning");
+                con.LogError("error");
             });
         }
 
@@ -49,11 +57,11 @@ namespace SlugcatDriver.Tool
             if (_commands.TryGetValue(commandName, out var handler))
             {
                 try { handler(args, console); }
-                catch (Exception e) { console.Log($"指令执行出错：{e.Message}"); }
+                catch (Exception e) { console.LogError($"Command execution error, return message {e.Message}"); }
             }
             else
             {
-                console.Log($"未知指令：{commandName}，输入 help 查看可用指令");
+                console.LogMessage($"Command not found! Try typing 'help'.");
             }
         }
     }
