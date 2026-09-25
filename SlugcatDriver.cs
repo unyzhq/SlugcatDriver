@@ -14,7 +14,7 @@ namespace SlugcatDriver {
 	{
 		public const string PLUGIN_GUID = "unyzhq.SlugcatDriver";
 		public const string PLUGIN_NAME = "Slugcat Driver";
-		public const string PLUGIN_VERSION = "0.1.0";
+		public const string PLUGIN_VERSION = "0.2.0";
 
 		private ConfigEntry<KeyboardShortcut>? _toggleConsoleKey;
 
