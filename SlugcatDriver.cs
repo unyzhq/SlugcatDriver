@@ -3,6 +3,7 @@ using BepInEx;
 using BepInEx.Configuration;
 using SlugcatDriver.Tool;
 using UnityEngine;
+using RWCustom;
 
 #pragma warning disable CS0618 // SecurityAction.RequestMinimum is obsolete. However, this does not apply to the mod, which still needs it. Suppress the warning indicating that it is obsolete.
 [assembly: SecurityPermission(SecurityAction.RequestMinimum, SkipVerification = true)]
@@ -17,11 +18,14 @@ namespace SlugcatDriver {
 		public const string PLUGIN_VERSION = "0.2.0";
 
 		private ConfigEntry<KeyboardShortcut>? _toggleConsoleKey;
+		private static bool _isInGame = false;
 
 
 		private void Awake()
 		{
 			Logger.LogInfo("Hello Rain World from " + PLUGIN_NAME + "!");
+
+			// ConsoleManager.cs
 
 			ConsoleManager console = gameObject.GetComponent<ConsoleManager>();
             if (console == null) console = gameObject.AddComponent<ConsoleManager>();
@@ -42,19 +46,35 @@ namespace SlugcatDriver {
 
 			var shortcut = _toggleConsoleKey.Value;
     		console.SetToggleKey(shortcut.MainKey);
+			
+			// ConsoleManager.cs
 
+			// StateTracker.cs
+			
+			StateTracker stateTracker = gameObject.GetComponent<StateTracker>();
+			if (stateTracker == null) stateTracker = gameObject.AddComponent<StateTracker>();
 
+			// StateTracker.cs
 		}
 
 		private void Update()
         {
+			_isInGame = Custom.rainWorld?.processManager?.currentMainLoop is RainWorldGame;
             // _toggleConsoleKey 理论上已在 Awake 中赋值，这里做空值保护，避免异常中断 Update。
             var shortcut = _toggleConsoleKey?.Value;
             if (shortcut == null) return;
 
-            if (shortcut.Value.IsDown() && ConsoleManager.Instance != null)
+            if (shortcut.Value.IsDown() && ConsoleManager.Instance != null && _isInGame)
 			{
-				ConsoleManager.Instance.Toggle();
+				ConsoleManager.Instance.Open();
+			}
+			if (ConsoleManager.Instance != null && !_isInGame)
+			{
+				ConsoleManager.Instance.Close();
+			}
+			if(StateTracker.Instance != null && !_isInGame)
+			{
+				StateTracker.Instance.Clear();
 			}
         }
 	}

@@ -10,17 +10,16 @@ namespace SlugcatDriver.Tool
     {
         public static ConsoleManager? Instance { get; private set; }
 
+        // 面板可见性
         private bool _isVisible = false;
-
-        // 1. 动态计算字体大小：基于屏幕高度，并限制在 12 到 22 之间
-        private int _baseFontSize;
-
-        // 2. 动态计算面板尺寸：宽度占屏幕的 95%，高度占 40%
+        // ime
+        private bool _imeSuppressed = false;
+        // 面板宽高
         private float _panelWidth;
         private float _panelHeight;
 
-        // 3. 计算内边距，避免内容紧贴边缘
-        private float _padding = 10f;
+        // 面板内边距
+        private float _padding;
         private float _contentX;
         private float _contentY;
         
@@ -29,7 +28,7 @@ namespace SlugcatDriver.Tool
         private float _panelX;
         private float _panelY;
 
-        // 4. 动态计算滚动区域和输入框的高度
+        // 滚动区域和输入框高度
         private float _scrollViewHeight; 
         private float _textFieldHeight;
         private bool _isCalculated = false;
@@ -41,19 +40,7 @@ namespace SlugcatDriver.Tool
         private GUIStyle? _errorStyle;
         private GUIStyle? _inputStyle;
         private GUIStyle? _promptStyle;
-        private Font? _consoleFont;
         private bool _isStylesInitialized = false;
-
-        // 背景色 (半透明深色)
-        private static readonly Color _BgColor = new Color(26f / 255f, 26f / 255f, 46f / 255f, 0.9f); // 怪猫
-
-        // 文字颜色
-        private static readonly Color _MessageColor = new Color(255f / 255f, 247f / 255f, 233f / 255f); // 饕鬄
-
-        private static readonly Color _InfoColor = new Color(166f / 255f, 219f / 255f, 255f / 255f); // 溪流
-        private static readonly Color _DebugColor = new Color(255f / 255f, 236f / 255f, 175f / 255f); // 僧侣 
-        private static readonly Color _WarningColor = new Color(255f / 255f, 221f / 255f, 221f / 255f); // 猎手
-        private static readonly Color _ErrorColor = new Color(255f / 255f, 70f / 255f, 50f / 255f); // 工匠
 
         private Vector2 _scroll = Vector2.zero;
         
@@ -113,19 +100,18 @@ namespace SlugcatDriver.Tool
         private void OnGUI()
         {
             if (!_isVisible || !_isCalculated || Event.current == null) return;
-            if (!_isStylesInitialized)
-            {
-                InitializeStyles();
-            }
-            ConsoleInputLock.SwitchToEnInput();
+            if (!_isStylesInitialized) InitializeStyles();
+
+            // 控制台开着时，保证输入法一直处于“被摘除”状态（对付切出游戏换输入法再切回来）
+            ConsoleImeGuard.Watchdog();
+
             // 拦截主键，防止字符进入 TextField
             if (Event.current.type == EventType.KeyDown &&
                 _toggleKey.HasValue &&
                 Event.current.keyCode == _toggleKey.Value)
             {
-                Toggle();
+                Close();
                 Event.current.Use();
-                ConsoleInputLock.SwitchToOriInput();
                 return;
             }
 
@@ -177,19 +163,19 @@ namespace SlugcatDriver.Tool
             }
 
             // --- 开始绘制 ---
-            GUI.skin.textField.fontSize = _baseFontSize;
+            GUI.skin.textField.fontSize = UiTheme.baseFontSize;
             GUI.matrix = Matrix4x4.identity;
             // 绘制半透明背景
             var oldColor = GUI.color;
-            GUI.color = _BgColor;
-            GUI.DrawTexture(new Rect(_panelX, _panelY, _panelWidth, _panelHeight), ConsolePanelBackground.WhiteTexture);
+            GUI.color = UiTheme.bgColor;
+            GUI.DrawTexture(new Rect(_panelX, _panelY, _panelWidth, _panelHeight), UiTheme.WhiteTexture);
             GUI.color = oldColor;
             
-            //GUI.Box(new Rect(_panelX, _panelY, _panelWidth, _panelHeight), GUIContent.none);
             GUILayout.BeginArea(new Rect(_contentX, _contentY, _contentWidth, _contentHeight));
 
             // 滚动视图
             _scroll = GUILayout.BeginScrollView(_scroll, GUILayout.Height(_scrollViewHeight));
+            _scroll.y = Mathf.Round(_scroll.y);   // 每帧取整，避免半像素位置
 
             foreach (var entry in _log)
             {
@@ -220,7 +206,7 @@ namespace SlugcatDriver.Tool
 
             GUILayout.BeginHorizontal();
 
-            GUILayout.Label(" >", _promptStyle, GUILayout.Width(_baseFontSize * 1.2f), GUILayout.Height(_textFieldHeight));
+            GUILayout.Label(" >", _promptStyle, GUILayout.Width(UiTheme.baseFontSize * 1.2f), GUILayout.Height(_textFieldHeight));
 
             _input = GUILayout.TextField(_input ?? string.Empty, _inputStyle, GUILayout.Height(_textFieldHeight));
 
@@ -237,30 +223,51 @@ namespace SlugcatDriver.Tool
                 ScrollToBottom();
             }
         }
+        private void OnApplicationFocus(bool hasFocus)
+        {
+            if (!hasFocus) return;          // 切出去：什么都不做（L1/L2 都是游戏自身作用域，不必还原）
+            if (!_isVisible) return;        // 控制台没开：不需要压制
 
+            try
+            {
+                ConsoleImeGuard.Suppress(); // 若期间被 Restore 过则重新压制（已压制时是 no-op）
+                ConsoleImeGuard.Reassert(); // 立刻重申一次，省掉看门狗那 ≤0.25s 的空窗
+            }
+            catch (Exception e) { ConsoleManager.Instance?.LogWarning("[IME] 焦点恢复重申失败：" + e.Message); }
+        }
+        private void OnApplicationPause(bool paused)
+        {
+            if (paused || !_isVisible) return;
+            try { ConsoleImeGuard.Suppress(); ConsoleImeGuard.Reassert(); }
+            catch (Exception e) { ConsoleManager.Instance?.LogWarning("[IME] 暂停恢复重申失败：" + e.Message); }
+        }
+        private void OnApplicationQuit() => ConsoleImeGuard.RestoreSafe();
+        private void OnDisable()  => ConsoleImeGuard.RestoreSafe();
         private void OnDestroy()
         {
             if (Instance == this) Instance = null;
+            ConsoleImeGuard.RestoreSafe();
         }
-        public void Toggle()
+
+        public void Open()
         {
-            _isVisible = !_isVisible;
-            if (_isVisible)
-            {
-                RecalculateLayout();
-            }
+            _isVisible = true;
+            ApplyImeState();
+            RecalculateLayout();
+        }
+        public void Close()
+        {
+            _isVisible = false;
+            ApplyImeState();
         }
 
         private void RecalculateLayout()
         {
-            // 面板：宽 80%，高 70%，水平居中，距顶部 5%
+            // 面板：宽 70%，高 82%，水平垂直居中，向上偏移1%
             _panelWidth  = Mathf.Round(Screen.width  * 0.7f);
             _panelHeight = Mathf.Round(Screen.height * 0.82f);
             _panelX      = Mathf.Round((Screen.width  - _panelWidth)  * 0.5f);
             _panelY      = Mathf.Round((Screen.height - _panelHeight) * 0.49f);
-
-            // 字体：基于屏幕高度，范围 12~20，原来 /45 偏大
-            _baseFontSize = Mathf.Clamp(Mathf.RoundToInt(Screen.height / 70f), 15, 18);
 
             // 面板内边距
             _padding = 12f;
@@ -270,10 +277,52 @@ namespace SlugcatDriver.Tool
             _contentHeight = Mathf.Round(_panelHeight - _padding * 2);
 
             // 输入框高度 + 滚动区高度
-            _textFieldHeight  = _baseFontSize * 1.8f;
+            _textFieldHeight  = UiTheme.baseFontSize * 1.8f;
             _scrollViewHeight = _contentHeight - _textFieldHeight - _padding;
 
             _isCalculated = true;
+        }
+        private void InitializeStyles()
+        {
+            _messageStyle = UiTheme.createMessageStyle();
+            _infoStyle = UiTheme.createInfoStyle();
+            _debugStyle = UiTheme.createDebugStyle();
+            _warningStyle = UiTheme.createWarningStyle();
+            _errorStyle = UiTheme.createErrorStyle();
+
+            _inputStyle = new GUIStyle(GUI.skin.textField)
+            {
+                fontSize = UiTheme.baseFontSize,
+                richText = false,
+                margin = new RectOffset(0, 0, 0, 0),
+                padding = new RectOffset(0, 0, 0, 0),
+                border = new RectOffset(0, 0, 0, 0),
+                alignment = TextAnchor.MiddleLeft
+            };
+            // 清掉所有状态的背景
+            _inputStyle.normal.background  = null;
+            _inputStyle.focused.background = null;
+            _inputStyle.hover.background   = null;
+            _inputStyle.active.background  = null;
+
+            _inputStyle.normal.textColor  = UiTheme.messageColor;
+            _inputStyle.focused.textColor = UiTheme.messageColor;
+            _inputStyle.hover.textColor   = UiTheme.messageColor;
+            _inputStyle.active.textColor  = UiTheme.messageColor;
+            _inputStyle.font = UiTheme.consoleFont;
+
+            _promptStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = UiTheme.baseFontSize,
+                richText = false,
+                margin = new RectOffset(0, 0, 0, 0),
+                padding = new RectOffset(0, 0, 0, 0)
+            };
+            _promptStyle.alignment = TextAnchor.MiddleLeft;
+            _promptStyle.normal.textColor = UiTheme.messageColor;
+            _promptStyle.font = UiTheme.consoleFont;
+
+            _isStylesInitialized = true;
         }
         private bool ContainsNonAscii(string s)
         {
@@ -289,104 +338,14 @@ namespace SlugcatDriver.Tool
             LogMessage($" > {raw}");
             CommandRegistry.Execute(raw, this);
         }
-        private void InitializeStyles()
+        
+        private void ApplyImeState()
         {
-            int marginLeft = 0,marginRight = 0,marginTop = 4,marginBottom = 4;
-            int paddingLeft = 0,paddingRifht = 0,paddingTop = 0,paddingBottom = 0;
-            if (_consoleFont == null)
-            {
-                // 优先尝试 Consolas，Windows 上基本都有
-                _consoleFont = Font.CreateDynamicFontFromOSFont(
-                    new[] { "Consolas", "Cascadia Mono", "Courier New", "Monaco" },
-                    _baseFontSize
-                );
-            }
-
-            if (_messageStyle == null) _messageStyle = new GUIStyle(GUI.skin.label);
-            _messageStyle.richText = true; // 关键：开启富文本
-            _messageStyle.wordWrap = true; // 自动换行
-            _messageStyle.normal.textColor  = _MessageColor;
-            _messageStyle.fontSize = _baseFontSize;
-            _messageStyle.margin = new RectOffset(marginLeft, marginRight, marginTop, marginBottom);
-            _messageStyle.padding = new RectOffset(paddingLeft, paddingRifht, paddingTop, paddingBottom);
-            _messageStyle.font = _consoleFont;
-            
-
-            if (_infoStyle == null) _infoStyle = new GUIStyle(GUI.skin.label);
-            _infoStyle.richText = true; // 关键：开启富文本
-            _infoStyle.wordWrap = true; // 自动换行
-            _infoStyle.normal.textColor = _InfoColor;
-            _infoStyle.fontSize = _baseFontSize;
-            _infoStyle.margin = new RectOffset(marginLeft, marginRight, marginTop, marginBottom);
-            _infoStyle.padding = new RectOffset(paddingLeft, paddingRifht, paddingTop, paddingBottom);
-            _infoStyle.font = _consoleFont;
-
-            if (_debugStyle == null) _debugStyle = new GUIStyle(GUI.skin.label);
-            _debugStyle.richText = true; // 关键：开启富文本
-            _debugStyle.wordWrap = true; // 自动换行
-            _debugStyle.normal.textColor = _DebugColor;
-            _debugStyle.fontSize = _baseFontSize;
-            _debugStyle.margin = new RectOffset(marginLeft, marginRight, marginTop, marginBottom);
-            _debugStyle.padding = new RectOffset(paddingLeft, paddingRifht, paddingTop, paddingBottom);
-            _debugStyle.font = _consoleFont;
-
-            if (_warningStyle == null) _warningStyle = new GUIStyle(GUI.skin.label);
-            _warningStyle.richText = true; // 关键：开启富文本
-            _warningStyle.wordWrap = true; // 自动换行
-            _warningStyle.normal.textColor = _WarningColor;
-            _warningStyle.fontSize = _baseFontSize;
-            _warningStyle.margin = new RectOffset(marginLeft, marginRight, marginTop, marginBottom);
-            _warningStyle.padding = new RectOffset(paddingLeft, paddingRifht, paddingTop, paddingBottom);
-            _debugStyle.font = _consoleFont;
-
-            if (_errorStyle == null) _errorStyle = new GUIStyle(GUI.skin.label);
-            _errorStyle.richText = true; // 关键：开启富文本
-            _errorStyle.wordWrap = true; // 自动换行
-            _errorStyle.normal.textColor = _ErrorColor;
-            _errorStyle.fontSize = _baseFontSize;
-            _errorStyle.margin = new RectOffset(marginLeft, marginRight, marginTop, marginBottom);
-            _errorStyle.padding = new RectOffset(paddingLeft, paddingRifht, paddingTop, paddingBottom);
-            _errorStyle.font = _consoleFont;
-
-            if (_inputStyle == null)
-            {
-                _inputStyle = new GUIStyle(GUI.skin.textField)
-                {
-                    fontSize = _baseFontSize,
-                    richText = false,
-                    margin = new RectOffset(0, 0, 0, 0),
-                    padding = new RectOffset(0, 0, 0, 0),
-                    border = new RectOffset(0, 0, 0, 0),
-                    alignment = TextAnchor.MiddleLeft
-                };
-            }
-
-            // 清掉所有状态的背景
-            _inputStyle.normal.background  = null;
-            _inputStyle.focused.background = null;
-            _inputStyle.hover.background   = null;
-            _inputStyle.active.background  = null;
-
-            _inputStyle.normal.textColor  = _MessageColor;
-            _inputStyle.focused.textColor = _MessageColor;
-            _inputStyle.hover.textColor   = _MessageColor;
-            _inputStyle.active.textColor  = _MessageColor;
-            _inputStyle.font = _consoleFont;
-
-            _promptStyle = new GUIStyle(GUI.skin.label)
-            {
-                fontSize = _baseFontSize,
-                richText = false,
-                margin = new RectOffset(0, 0, 0, 0),
-                padding = new RectOffset(0, 0, 0, 0)
-            };
-            _promptStyle.alignment = TextAnchor.MiddleLeft;
-            _promptStyle.normal.textColor = _MessageColor;
-            _promptStyle.font = _consoleFont;
-
-            _isStylesInitialized = true;
+            if (_isVisible == _imeSuppressed) return;    // 状态没变 → 什么都不做
+            _imeSuppressed = _isVisible;
+            if (_isVisible) ConsoleImeGuard.Suppress();
+            else         ConsoleImeGuard.Restore();
         }
-
 
         private void ScrollToBottom() => _scroll.y = float.MaxValue;
 
