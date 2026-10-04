@@ -386,3 +386,419 @@ public struct AnalysisContext
             { "isZeroGPoleGrab", "IZPG" },
             { "isVineGrab", "IVin" },
         };
+
+
+        输入
+        /// 跑 **一个 tick**。
+        ///
+        /// ★★ v0.22.131：**这两行以前都是错的**（用户问"手里那个物品在沙盒房间里真的有物理作用吗"时
+        /// 顺着查出来的，两处都会让"包络"算出来的数字不可信）：
+        ///
+        /// ① **输入根本没生效**。以前是：
+        ///      `for (n=input.Length-1; n>0; n--) input[n]=input[n-1];  Cat.input[0]=ip;  Cat.Update(eu);`
+        ///    可是 `Player.Update` 内部会自己调 `checkInput()`（`Player.cs:6376`），而 `checkInput`
+        ///    **第一件事就是把输入历史再移一位**（`:6971-6974`），然后
+        ///    `input[0] = controller.GetInput()` / `AI.Update()` / **`RWInput.PlayerInput(playerNumber)`**（`:6980-6993`）
+        ///    ⇒ 我们设的 `ip` 被挤到 `input[1]`，`input[0]` 变成**真键盘/空输入**，
+        ///    而 `MovementUpdate`（`:6631`）读的是 `input[0]` ⇒ **沙盒里跑的根本不是我们给的输入**。
+        ///    修法：走游戏**自己的**注入通道 —— `checkInput` 的第一个分支就是
+        ///    `if (controller != null) input[0] = controller.GetInput();`，
+        ///    所以我们临时给影子猫挂一个 `SimController`（`PlayerController` 只有 `GetInput()` 一个虚方法，
+        ///    `Player.cs:1083-1093`），它返回当前这一 tick 要注入的输入；跑完立刻还原成 `null`。
+        ///    历史移位交给 `checkInput` 自己（**不再自己移**，否则会移两次）。
+        ///
+        /// ② **沙盒里只有猫在动**。以前只 `Cat.Update(eu)`；而真实房间是遍历 `updateList`
+        ///    （`Room.cs:5058-5089`），对每个对象 `Update(eu)`、再 `graphicsModule.Update()` +
+        ///    `GraphicsModuleUpdated(actuallyViewed, eu)`。**手里的东西就靠后者** ——
+        ///    `Player.GraphicsModuleUpdated`（`:6721-6830+`）里按质量比推拉双方体块、
+        ///    对 `ObjectGrabability.Drag` 的重物施加拖拽力 ⇒ **它绝不只是"图形"**。
+        ///    不遍历 `updateList` 的话：掷出去的矛**不会飞**（飞行在 `Spear.Update` 里），
+        ///    重物的拖拽/负重也全都不会发生。⇒ 现在照 `Room.Update` 一模一样地遍历。
+        /// </summary>
+        public void StepOneTick(Player.InputPackage ip)
+        {
+            if (!Built) return;
+            Player.PlayerController saved = null;
+            try
+            {
+                // 让 `checkInput` 从我们这里取输入（见上面 ①）
+                saved = Cat.controller;
+                _simCtrl.Input = ip;
+                Cat.controller = _simCtrl;
+
+                // 影子猫的图形模块必须先存在：`Room.Update` 是按 `graphicsModule != null`
+                // 决定给 `GraphicsModuleUpdated(actuallyViewed: true)` 的，
+                // 否则物理会**取决于影子猫可不可见**（那是不可接受的不忠实）。
+                if (Cat.graphicsModule == null)
+                {
+                    try { Cat.InitiateGraphicsModule(); } catch { }
+                }
+
+                TickRoom();
+                // ★★★ v0.22.134：**步进之后立刻归位**（管道逻辑可能趁这一 tick 把猫塞进真房间）
+                EnforceSandbox();
+            }
+            catch (Exception e)
+            {
+                if (!_stepErrorLogged) { _stepErrorLogged = true; _log("[影子] ✗ 单 tick 模拟异常（只报一次）：\n" + e); }
+            }
+            finally
+            {
+                try { Cat.controller = saved; } catch { }
+            }
+            _eu = !_eu;            // `game.evenUpdate` 每 tick 翻转 ⇒ 一帧连跑 N tick 时必须自己翻
+            TicksRan++;
+        }
+
+官方AI输入：
+SlugNPCAI.Move();
+官方玩家输入：
+RWInput
+	private static Player.InputPackage PlayerInputLogic(int categoryID, int playerNumber)
+	{
+		//IL_014e: Unknown result type (might be due to invalid IL or missing references)
+		//IL_0170: Unknown result type (might be due to invalid IL or missing references)
+		//IL_017a: Unknown result type (might be due to invalid IL or missing references)
+		//IL_017f: Unknown result type (might be due to invalid IL or missing references)
+		//IL_0141: Unknown result type (might be due to invalid IL or missing references)
+		//IL_0146: Unknown result type (might be due to invalid IL or missing references)
+		//IL_01df: Unknown result type (might be due to invalid IL or missing references)
+		//IL_00ec: Unknown result type (might be due to invalid IL or missing references)
+		//IL_00f1: Unknown result type (might be due to invalid IL or missing references)
+		//IL_01f9: Unknown result type (might be due to invalid IL or missing references)
+		//IL_0213: Unknown result type (might be due to invalid IL or missing references)
+		//IL_022d: Unknown result type (might be due to invalid IL or missing references)
+		//IL_02b6: Unknown result type (might be due to invalid IL or missing references)
+		//IL_024e: Unknown result type (might be due to invalid IL or missing references)
+		//IL_02c8: Unknown result type (might be due to invalid IL or missing references)
+		//IL_026c: Unknown result type (might be due to invalid IL or missing references)
+		//IL_02e4: Unknown result type (might be due to invalid IL or missing references)
+		//IL_0291: Unknown result type (might be due to invalid IL or missing references)
+		Player.InputPackage result = default(Player.InputPackage);
+		Controller newController = PlayerRecentController(playerNumber);
+		Custom.rainWorld.options.controls[playerNumber].UpdateActiveController(newController);
+		result.controllerType = Custom.rainWorld.options.controls[playerNumber].GetActivePreset();
+		result.gamePad = result.controllerType != Options.ControlSetup.Preset.KeyboardSinglePlayer && result.controllerType != Options.ControlSetup.Preset.None;
+		Options.ControlSetup controlSetup = Custom.rainWorld.options.controls[playerNumber];
+		switch (categoryID)
+		{
+		case 0:
+			if (controlSetup.GetButton(0))
+			{
+				result.jmp = true;
+			}
+			if (controlSetup.GetButton(4))
+			{
+				result.thrw = true;
+			}
+			if (controlSetup.GetButton(11))
+			{
+				result.mp = true;
+			}
+			if (controlSetup.GetButton(3))
+			{
+				result.pckp = true;
+			}
+			if (controlSetup.GetButton(34))
+			{
+				result.spec = true;
+			}
+			result.analogueDir = new Vector2(controlSetup.GetAxis(1), controlSetup.GetAxis(2));
+			break;
+		case 1:
+			if (controlSetup.GetButton(8))
+			{
+				result.jmp = true;
+			}
+			if (controlSetup.GetButton(9))
+			{
+				result.thrw = true;
+			}
+			if (controlSetup.GetButton(13))
+			{
+				result.mp = true;
+			}
+			result.analogueDir = new Vector2(controlSetup.GetAxis(6), controlSetup.GetAxis(7));
+			break;
+		}
+		result.analogueDir = Vector2.ClampMagnitude(result.analogueDir * (ModManager.MMF ? Custom.rainWorld.options.analogSensitivity : 1f), 1f);
+		if (Custom.rainWorld.options.controls[playerNumber].xInvert)
+		{
+			result.analogueDir.x *= -1f;
+		}
+		if (Custom.rainWorld.options.controls[playerNumber].yInvert)
+		{
+			result.analogueDir.y *= -1f;
+		}
+		if (result.analogueDir.x < -0.5f)
+		{
+			result.x = -1;
+		}
+		if (result.analogueDir.x > 0.5f)
+		{
+			result.x = 1;
+		}
+		if (result.analogueDir.y < -0.5f)
+		{
+			result.y = -1;
+		}
+		if (result.analogueDir.y > 0.5f)
+		{
+			result.y = 1;
+		}
+		if (ModManager.MMF)
+		{
+			if (result.analogueDir.y < -0.05f || result.y < 0)
+			{
+				if (result.analogueDir.x < -0.05f || result.x < 0)
+				{
+					result.downDiagonal = -1;
+				}
+				else if (result.analogueDir.x > 0.05f || result.x > 0)
+				{
+					result.downDiagonal = 1;
+				}
+			}
+		}
+		else if (result.analogueDir.y < -0.05f)
+		{
+			if (result.analogueDir.x < -0.05f)
+			{
+				result.downDiagonal = -1;
+			}
+			else if (result.analogueDir.x > 0.05f)
+			{
+				result.downDiagonal = 1;
+			}
+		}
+		return result;
+	}
+
+
+    --
+    构建 Player.InputPackage 然后返回给上游
+    default(Player.InputPackage) 创建一个结构体实例
+    new InputPackage(gamePad: false, Options.ControlSetup.Preset.None, 0, 0, jmp: false, thrw: false, pckp: false, mp: false, crouchToggle: false);
+    public struct InputPackage
+	{
+		public int x;
+
+		public int y;
+
+		public bool jmp;
+
+		public bool thrw;
+
+		public bool pckp;
+
+		public bool mp;
+
+		public bool spec;
+
+		public bool gamePad;
+
+		public Options.ControlSetup.Preset controllerType;
+
+		public bool crouchToggle;
+
+		public Vector2 analogueDir;
+
+		public int downDiagonal;
+
+		public IntVector2 IntVec => new IntVector2(x, y);
+
+		public IntVector2 ZeroGGamePadIntVec
+		{
+			get
+			{
+				if (analogueDir.magnitude > 0.2f)
+				{
+					return new IntVector2((Mathf.Abs(analogueDir.x) > 0.1f) ? ((int)Mathf.Sign(analogueDir.x)) : 0, (Mathf.Abs(analogueDir.y) > 0.1f) ? ((int)Mathf.Sign(analogueDir.y)) : 0);
+				}
+				return IntVec;
+			}
+		}
+
+		public bool AnyInput
+		{
+			get
+			{
+				if (!AnyDirectionalInput && !jmp && !thrw && !pckp)
+				{
+					return spec;
+				}
+				return true;
+			}
+		}
+
+		public bool AnyDirectionalInput
+		{
+			get
+			{
+				if (x == 0 && y == 0)
+				{
+					return analogueDir != Vector2.zero;
+				}
+				return true;
+			}
+		}
+
+		public InputPackage(bool gamePad, Options.ControlSetup.Preset controllerType, int x, int y, bool jmp, bool thrw, bool pckp, bool mp, bool crouchToggle)
+			: this(gamePad, controllerType, x, y, jmp, thrw, pckp, mp, crouchToggle, spec: false)
+		{
+		}
+
+		public InputPackage(bool gamePad, Options.ControlSetup.Preset controllerType, int x, int y, bool jmp, bool thrw, bool pckp, bool mp, bool crouchToggle, bool spec)
+		{
+			this.gamePad = gamePad;
+			this.controllerType = controllerType;
+			this.x = x;
+			this.y = y;
+			this.jmp = jmp;
+			this.thrw = thrw;
+			this.pckp = pckp;
+			this.spec = spec;
+			this.mp = mp;
+			this.crouchToggle = crouchToggle;
+			analogueDir = new Vector2(0f, 0f);
+			downDiagonal = 0;
+		}
+	}
+    // playerNumber的作用是用于从输入层获取对应玩家的输入，而我们不需要这个，
+    // 但我们可以利用RWInput.PlayerInput(playerNumber)来获取玩家的真实输入，再按需改造它
+    public static Player.InputPackage PlayerInput(int playerNumber)
+    {
+        Player.InputPackage result = default(Player.InputPackage);
+    }
+    现在问题变成，怎么将构建的InputPackage注入玩家输入中？
+    答案：
+    PlayerController实例.Input = InputPackage实例;
+    Player实例.controller = PlayerController实例;
+    错！
+    游戏最终读取输入看的是input[0]
+    而每次更新游戏帧时，
+    Player会用checkInput()检查输入
+    如果controller != null，就input[0] = controller.GetInput(); // ！！！给程序用
+    如果 AI != null 就 AI.Update(); // 给 ai 用
+    否则 input[0] = RWInput.PlayerInput(num2); // 给玩家用
+    因此，我们需要构筑的是一整个controller虽然controller只有GetInput()有用，最终生效的InputPackage是controller.GetInput()返回的那个。
+
+	public abstract class PlayerController
+	{
+		public PlayerController()
+		{
+		}
+
+		public virtual InputPackage GetInput()
+		{
+			return new InputPackage(gamePad: false, Options.ControlSetup.Preset.None, 0, 0, jmp: false, thrw: false, pckp: false, mp: false, crouchToggle: false);
+		}
+	}
+
+    因此我们的做法是：
+    1. 实例IP = new InputPackage(gamePad: false, Options.ControlSetup.Preset.None, 0, 0, jmp: false, thrw: false, pckp: false, mp: false, crouchToggle: false);
+    2. 实例PC = new 定制的PlayerController(实例IP);
+    3. Player实例.controller = 实例PC;
+    游戏每帧都会自动将input向后移动一位，因此不用手动为输入收尾。（不过，谁会把contoller置空呢？如果不置空，那么下一帧它还是会生效 已确认会被游戏自动置空）
+    注意，这个做法会完全屏蔽玩家的输入和AI的输入。
+
+    关于SlugNPCAI：
+    DecideBehavior() 是用于决定行为的方法
+    SlugNPCAI 的行为控制是通过input[0] = InputPackage实例 直接控制的，而非controller
+    所以，controller更像是专门留给开发者的接口
+    
+    现在的问题：
+    1. 怎么让玩家猫变成AI猫？使之拥有SlugNPC的性格和行为？
+    2. SlugNPCAI的控制接口是什么？要怎么通过接口控制AI猫的行为？比如，像Moba游戏一样让蛞蝓猫前往指定地点？拾取指定物品？
+    3. SlugNPCAI的数据接口是什么？我怎么知道蛞蝓猫准备去哪？
+
+    1. 线索
+    AbstractCreature
+    MSCInitiateAI()
+    if (ModManager.MSC)
+        if (creatureTemplate.TopAncestor().type == MoreSlugcatsEnums.CreatureTemplateType.SlugNPC)
+            abstractAI.RealAI = new SlugNPCAI(this, world);
+    // this = AbstractCreature实例
+    // world 是父类的父类的...的属性
+    // 访问公开属性 abstractAI.RealAI 
+    // 访问公开属性 abstractAI.world‘
+    // SlugNPCAI内部会直接给参数以注入SlugNPCAI实例(也就是方法里的this)
+    // 所以，对于一个Player，想让它变成AI，只需执行 new SlugNPCAI(Player as AbstractCreature,Player.world);
+    // 但最稳妥的方式还是 让条件 base.abstractCreature.creatureTemplate.TopAncestor().type == MoreSlugcatsEnums.CreatureTemplateType.SlugNPC 成立，然后调用MSCInitiateAI
+
+    类AbstractCreatureAI似乎有关于AI接口的线索
+
+旧项目
+public sealed class NpcGoalEngine
+    private void ApplyAbstractLayer(SlugNpcAI ai, NpcGoal g,AbstractCreature followWho)
+    public void ApplyIntent(Player cat, SlugNpcAI ai)
+
+源码 关于朋友
+if (AI.creature.Room.creatures[k].ID == AI.creature.state.socialMemory.relationShips[j].subjectID && AI.creature.Room.creatures[k].realizedCreature != null)
+{
+    friend = AI.creature.Room.creatures[k].realizedCreature;
+    friendRel = AI.creature.state.socialMemory.relationShips[j];
+    break;
+}
+SlugNPCAI
+    Update()
+        if (base.friendTracker.friend == null && cat.room != null && cat.room.abstractRoom.shelter)
+        {
+            for (int i = 0; i < cat.room.game.Players.Count; i++)
+            {
+                if (cat.room.game.Players[i].realizedCreature != null && cat.room.game.Players[i].realizedCreature.room == cat.room)
+                {
+                    SocialMemory.Relationship orInitiateRelationship = cat.State.socialMemory.GetOrInitiateRelationship(cat.room.game.Players[i].ID);
+                    orInitiateRelationship.InfluenceLike(1f);
+                    orInitiateRelationship.InfluenceTempLike(1f);
+                }
+            }
+        }
+房间中的蛞蝓猫将通过GetOrInitiateRelationship自动进入AI.creature.state.socialMemory.relationShips
+FriendTracker
+    Update()
+    ...
+        if (!(AI.creature.state.socialMemory.relationShips[j].like > 0.5f) || !(AI.creature.state.socialMemory.relationShips[j].tempLike > 0.5f))
+        {
+            continue;
+        }
+        ...
+但FriendTracker是否执行需要门槛 like > 0.5 && tempLike > 0.5，过了它，才有base.friendTracker.friend != null
+
+SocialMemory
+    Relationship
+        public float like
+        public float tempLike
+
+而这两个字段都是公开的，因此，可以直接设置为1
+
+配置界面
+
+Player1 Player2 Player3 Player4
+乙币图标 乙币图标 乙币图标 乙币图标（改成蛞蝓猫一脸茫然的表情头像+乙币印章/蛞蝓猫一脸自信的表情头像+开智印章）参考 牧原 表情
+ID __   ID __   ID __   ID __  
+[] AI   [] AI   [] AI   [] AI  
+勾选后就显示 开智图标
+全局：
+智能对话（开启测本地2B模型，能接收并执行指令 目标是能听懂人话，并且覆盖dev console的大部分指令和开发者功能 生成物体、移除生物等等）
+触发后会询问玩家获得许可，玩家回复可决定是否执行
+云端模型（提供API）
+
+如何实现？
+给AI提供一个说明书，并给出调用接口让AI用(参考之前的幕间系统，AI只管返回json)
+
+这只蛞蝓猫必须能起到带路的功能，约等于向导（没错，就是向导！陪伴型猫崽+向导NPC）
+
+通过反射执行私有方法：
+ConsoleManager.Instance?.LogDebug($"{(typeof(Player).GetMethod("Grabability", BindingFlags.NonPublic | BindingFlags.Instance)).Invoke(self,new []{obj})}");
+
+
+			if (ModManager.MSC && rainWorld.safariMode)
+			{
+				AbstractCreature abstractCreature8 = new AbstractCreature(world, StaticWorld.GetCreatureTemplate("Overseer"), null, new WorldCoordinate(num, 15, 25, -1), new EntityID(-1, 0));
+				world.GetAbstractRoom(num).AddEntity(abstractCreature8);
+				cameras[0].followAbstractCreature = abstractCreature8;
+				(abstractCreature8.abstractAI as OverseerAbstractAI).safariOwner = true;
+				abstractCreature8.ignoreCycle = true;
+				GetStorySession.saveState.deathPersistentSaveData.karma = 0;
+			}

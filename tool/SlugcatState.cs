@@ -6,7 +6,8 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Reflection;
 using BepInEx.Logging;
-
+using static CreatureTemplate.Relationship;
+using Type = System.Type;
 namespace SlugcatDriver.Tool
 {
     public class SlugcatState
@@ -389,6 +390,13 @@ namespace SlugcatDriver.Tool
                 return h > v ? h : v;
             }
         }
+
+        public SocialMemory.Relationship relationshipWithMe => _p.abstractCreature.state.socialMemory.GetOrInitiateRelationship(_p.room.game.Players[0].ID);
+        public float likeMe => relationshipWithMe.like;
+        public float fearMe => relationshipWithMe.fear;
+        public float knowMe => relationshipWithMe.know;
+        public float tempLikeMe => relationshipWithMe.tempLike;
+        public float tempFearMe => relationshipWithMe.tempFear;
 
     }
 }

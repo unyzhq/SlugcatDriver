@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Linq;
 using System.Reflection;
+using MoreSlugcats;
 using RWCustom;       // Custom.rainWorld（RWCustom.Custom，Custom.cs:18）
 using UnityEngine;
 using UnityEngineInternal.Video;    // Object.FindObjectOfType 兜底
@@ -52,6 +53,7 @@ namespace SlugcatDriver.Tool
             //   state <目标> <属性名>      打印该值，并在左上角【持续监测】它（面板）
             //   state clear                清空所有监测面板
             Register("state", (args, console) => StateCommand(args, console));
+
         }
 
         public static void Register(string name, CommandHandler handler)

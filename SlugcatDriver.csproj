@@ -18,6 +18,7 @@
   <PropertyGroup>
     <ModBuildFolder>mod/SlugcatDriver</ModBuildFolder>
     <RainWorldDir>C:\Program Files (x86)\Steam\steamapps\common\Rain World</RainWorldDir>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile> <!--允许ReferenceTrimmer输出文档，这样它才能真的告诉你哪些没用上-->
   </PropertyGroup>
 
   <ItemGroup>
@@ -33,6 +34,18 @@
       <HintPath>$(RainWorldDir)\RainWorld_Data\Managed\Assembly-CSharp.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="Assembly-CSharp-All">
+      <HintPath>$(RainWorldDir)\RainWorld_Data\Managed\*.dll</HintPath> <!--引用全部dll-->
+      <Private>false</Private> <!--构建时不将dll打包到程序集内，避免法律问题-->
+    </Reference>
+    <Reference Include="Assembly-CSharp-Core">
+      <HintPath>$(RainWorldDir)\RainWorld_Data\core\*.dll</HintPath> <!--引用全部dll-->
+      <Private>false</Private> <!--构建时不将dll打包到程序集内，避免法律问题-->
+    </Reference>
+    <Reference Include="Assembly-CSharp-Utils">
+      <HintPath>$(RainWorldDir)\RainWorld_Data\utils\PUBLIC-Assembly-CSharp.dll</HintPath>
+      <Private>false</Private> <!--构建时不将dll打包到程序集内，避免法律问题-->
+    </Reference>
     <PackageReference Include="BepInEx.Analyzers" Version="1.*" PrivateAssets="all" />
     <PackageReference Include="BepInEx.Core" Version="5.4.17" /> <!-- The version of BepInEx shipped with Rain World -->
     <PackageReference Include="UnityEngine.Modules" Version="2020.3.38" IncludeAssets="compile" /> <!-- The version of Unity shipped with Rain World -->
@@ -41,6 +54,7 @@
   <ItemGroup>
     <ModAssetFiles Include="assets/**/*" />
     <ModPluginFiles Include="$(TargetPath)" />
+    <PackageReference Include="ReferenceTrimmer" Version="3.3.10" PrivateAssets="all" /> <!--告诉你哪些dll没用到-->
   </ItemGroup>
 
   <!--
@@ -56,6 +70,18 @@
       <FileWrites Include="@(ModAssetFiles->'$(OutDir)$(ModBuildFolder)/%(RecursiveDir)%(Filename)%(Extension)');@(ModPluginFiles->'$(OutDir)$(ModBuildFolder)/plugins/%(Filename)%(Extension)')" />
     </ItemGroup>
   </Target>
+  <Target Name="DeployMod" AfterTargets="Build">
+    <!--自动覆盖旧的模组文件夹-->
+    <ItemGroup>
+      <ModFiles Include="$(OutDir)$(ModBuildFolder)\**\*" />
+    </ItemGroup>
+
+    <Copy SourceFiles="@(ModFiles)"
+          DestinationFolder="C:\Program Files (x86)\Steam\steamapps\common\Rain World\RainWorld_Data\StreamingAssets\mods\SlugcatDriver\%(RecursiveDir)"
+          SkipUnchangedFiles="true"
+          OverwriteReadOnlyFiles="true" />
+  </Target>
+
 
   <!-- The ____DependsOn properties only work when defined after importing the Sdk targets -->
   <!-- https://learn.microsoft.com/en-us/visualstudio/msbuild/how-to-extend-the-visual-studio-build-process#override-dependson-properties -->

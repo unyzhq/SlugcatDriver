@@ -18,7 +18,8 @@ namespace SlugcatDriver {
 		public const string PLUGIN_VERSION = "0.2.0";
 
 		private ConfigEntry<KeyboardShortcut>? _toggleConsoleKey;
-		private static bool _isInGame = false;
+		private static bool _isInGame = false; // _isInGame 检查游戏状态
+		private static bool _lastIsGame = false; // _lastInGame 保证只在切换时执行一次代码
 
 
 		private void Awake()
@@ -40,7 +41,8 @@ namespace SlugcatDriver {
             _toggleConsoleKey = Config.Bind(
                 "General",
                 "ToggleConsoleKey",
-                new KeyboardShortcut(KeyCode.BackQuote),
+                // new KeyboardShortcut(KeyCode.BackQuote),
+				new KeyboardShortcut(KeyCode.Tab),
                 "打开/关闭控制台的按键"
             );
 
@@ -50,11 +52,14 @@ namespace SlugcatDriver {
 			// ConsoleManager.cs
 
 			// StateTracker.cs
-			
 			StateTracker stateTracker = gameObject.GetComponent<StateTracker>();
-			if (stateTracker == null) stateTracker = gameObject.AddComponent<StateTracker>();
-
+			if (stateTracker == null) gameObject.AddComponent<StateTracker>();
 			// StateTracker.cs
+
+			// DpcatMeow.cs
+			DpcatMeow dpcatMeow = gameObject.GetComponent<DpcatMeow>();
+			if (dpcatMeow == null) gameObject.AddComponent<DpcatMeow>();
+			// DpcatMeow.cs
 		}
 
 		private void Update()
@@ -68,14 +73,23 @@ namespace SlugcatDriver {
 			{
 				ConsoleManager.Instance.Open();
 			}
-			if (ConsoleManager.Instance != null && !_isInGame)
+			if (DpcatMeow.Instance != null && !DpcatMeow.Instance.isInited && _isInGame)
+			{
+				DpcatMeow.Instance.InitDpcat();
+			}
+			if (ConsoleManager.Instance != null && _lastIsGame != _isInGame && !_isInGame)
 			{
 				ConsoleManager.Instance.Close();
 			}
-			if(StateTracker.Instance != null && !_isInGame)
+			if(StateTracker.Instance != null && _lastIsGame != _isInGame && !_isInGame)
 			{
 				StateTracker.Instance.Clear();
 			}
+			if(DpcatMeow.Instance != null && _lastIsGame != _isInGame && !_isInGame)
+			{
+				DpcatMeow.Instance.Clear();
+			}
+			_lastIsGame = _isInGame;
         }
 	}
 }
