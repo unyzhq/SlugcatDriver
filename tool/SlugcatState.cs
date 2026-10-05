@@ -13,6 +13,8 @@ namespace SlugcatDriver.Tool
     public class SlugcatState
     {
         private Player _p;
+        private AbstractCreature _ac => _p.abstractCreature;
+        private PlayerState _pst => _ac.state as PlayerState;
         public SlugcatState(Player p) => _p = p;
         // 实际输入
         public int inputX => _p.input[0].x; // 水平方向 −1/0/1（↔️）
@@ -67,6 +69,9 @@ namespace SlugcatDriver.Tool
         public bool isZeroGPoleGrab => animation == "ZeroGPoleGrab"; // 零重力抓杆
         public bool isVineGrab => animation == "VineGrab"; // 抓藤蔓
         public BodyChunk[] bodyChunks => _p.bodyChunks; // 身体块数组：[0]=上半身（头/主块，多数位移以它为准），[1]=下半身（腹/尾块）
+        
+        public bool pstAlive => _pst.alive;
+        public bool pstPermaDead => _pst.permaDead;
         public bool isAirborne // 腾空(脚不沾地) 目前在狭长管道内也是True 需要很多测试样本
         {
             get

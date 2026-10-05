@@ -20,7 +20,7 @@ namespace SlugcatDriver {
 		private ConfigEntry<KeyboardShortcut>? _toggleConsoleKey;
 		private static bool _isInGame = false; // _isInGame 检查游戏状态
 		private static bool _lastIsGame = false; // _lastInGame 保证只在切换时执行一次代码
-
+		DpcatMeowConfig _dapcatMeowConfig;
 
 		private void Awake()
 		{
@@ -60,6 +60,10 @@ namespace SlugcatDriver {
 			DpcatMeow dpcatMeow = gameObject.GetComponent<DpcatMeow>();
 			if (dpcatMeow == null) gameObject.AddComponent<DpcatMeow>();
 			// DpcatMeow.cs
+
+			// DapcatMeowConfig.cs
+			_dapcatMeowConfig = new DpcatMeowConfig();
+			// DapcatMeowConfig.cs
 		}
 
 		private void Update()
@@ -91,5 +95,30 @@ namespace SlugcatDriver {
 			}
 			_lastIsGame = _isInGame;
         }
+		private void OnEnable()
+		{
+			On.RainWorld.OnModsInit += RainWorldOnOnModsInit;
+		}
+		private bool _isInit = false;
+		private void RainWorldOnOnModsInit(On.RainWorld.orig_OnModsInit orig, RainWorld self)
+		{
+			orig(self);
+			if (_isInit) return;
+
+			try
+			{
+				_isInit = true;
+
+				//Your hooks go here
+				gameObject.GetComponent<DpcatMeow>().DpcatMeowPatch();
+
+				MachineConnector.SetRegisteredOI("unyzhq.SlugcatDriver", _dapcatMeowConfig);
+			}
+			catch (Exception ex)
+			{
+				Logger.LogError(ex);
+			}
+		}
+
 	}
 }
