@@ -15,7 +15,7 @@ namespace SlugcatDriver {
 	{
 		public const string PLUGIN_GUID = "unyzhq.SlugcatDriver";
 		public const string PLUGIN_NAME = "Slugcat Driver";
-		public const string PLUGIN_VERSION = "0.2.0";
+		public const string PLUGIN_VERSION = "1.2.0";
 
 		private ConfigEntry<KeyboardShortcut>? _toggleConsoleKey;
 		private static bool _isInGame = false; // _isInGame 检查游戏状态

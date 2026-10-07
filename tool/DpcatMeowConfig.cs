@@ -16,17 +16,20 @@ namespace SlugcatDriver.Tool
 
         public DpcatMeowConfig()
         {
-            var isAIApplyToPlayerRange = new ConfigAcceptableRange<bool>(false,true);
-            isAIApplyToPlayer1 = this.config.Bind<bool>("isAIApplyToPlayer1",false,isAIApplyToPlayerRange);
-            isAIApplyToPlayer2 = this.config.Bind<bool>("isAIApplyToPlayer2",true,isAIApplyToPlayerRange);
-            isAIApplyToPlayer3 = this.config.Bind<bool>("isAIApplyToPlayer3",false,isAIApplyToPlayerRange);
-            isAIApplyToPlayer4 = this.config.Bind<bool>("isAIApplyToPlayer4",false,isAIApplyToPlayerRange);
+            var boolRange = new ConfigAcceptableRange<bool>(false,true);
+            isAIApplyToPlayer1 = this.config.Bind<bool>("isAIApplyToPlayer1",false,boolRange);
+            isAIApplyToPlayer2 = this.config.Bind<bool>("isAIApplyToPlayer2",true,boolRange);
+            isAIApplyToPlayer3 = this.config.Bind<bool>("isAIApplyToPlayer3",false,boolRange);
+            isAIApplyToPlayer4 = this.config.Bind<bool>("isAIApplyToPlayer4",false,boolRange);
 
             var idPlayerRange = new ConfigAcceptableRange<int>(0,9999);
             idPlayer1 = this.config.Bind<int>("idPlayer1", 0, idPlayerRange);
             idPlayer2 = this.config.Bind<int>("idPlayer2", 1, idPlayerRange);
             idPlayer3 = this.config.Bind<int>("idPlayer3", 2, idPlayerRange);
             idPlayer4 = this.config.Bind<int>("idPlayer4", 3, idPlayerRange);
+
+            isJollyDifficultyLockedToEASY = this.config.Bind<bool>("isJollyDifficultyLockedToEASY", true, boolRange);
+            
             Instance = this;
         }
         public readonly Configurable<bool> isAIApplyToPlayer1;
@@ -37,6 +40,8 @@ namespace SlugcatDriver.Tool
         public readonly Configurable<int> idPlayer3;
         public readonly Configurable<bool> isAIApplyToPlayer4;
         public readonly Configurable<int> idPlayer4;
+        
+        public readonly Configurable<bool> isJollyDifficultyLockedToEASY;
         private bool isChinese => Custom.rainWorld.options.language == InGameTranslator.LanguageID.Chinese;
 
 
@@ -83,10 +88,12 @@ namespace SlugcatDriver.Tool
                 opTextBox2,                                                                 // 14
                 opTextBox3,                                                                 // 15
                 opTextBox4,                                                                 // 16
-                new OpLabel( 106f, 433f, "ID", false),                                       // 17
+                new OpLabel( 106f, 433f, "ID", false),                                      // 17
                 new OpLabel(256f, 433f, "ID", false),                                       // 18
                 new OpLabel(406f, 433f, "ID", false),                                       // 19
                 new OpLabel(556f, 433f, "ID", false),                                       // 20
+                new OpCheckBox(isJollyDifficultyLockedToEASY, new Vector2( 50f, 395f)),     // 21
+                new OpLabel(90f, 395f, isChinese ? "惬意合作难度锁定为简单难度(这会使得难度设定失效)" : "Set the cooperative difficulty to Easy (this will make the difficulty setting ineffective)", false),                                   // 22
             };
 
             opTab.AddItems(UIArrPlayerOptions);

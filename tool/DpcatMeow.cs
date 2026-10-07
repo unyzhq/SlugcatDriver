@@ -5,6 +5,8 @@ using RWCustom;
 using System.Reflection;
 using System.Reflection;
 using System.Runtime.Serialization;
+using JetBrains.Annotations;
+using MonoMod.RuntimeDetour;
 
 namespace SlugcatDriver.Tool
 {
@@ -12,17 +14,19 @@ namespace SlugcatDriver.Tool
     {
         public static DpcatMeow? Instance { get; private set; }
         public bool isInited = false;
-        public Dictionary<int,Player>? playerMap;
-        private Dictionary<Player,int>? playerNumMap;
+        // 惬意合作的玩家位次是连续的，不会出现_ac4不空而_ac3为空的情况
+        private RainWorldGame? _game => Custom.rainWorld.processManager.currentMainLoop as RainWorldGame;
+        private AbstractCreature? _ac1 => _game?.Players[0];
+        private AbstractCreature? _ac2 => _game?.Players[1];
+        private AbstractCreature? _ac3 => _game?.Players[2];
+        private AbstractCreature? _ac4 => _game?.Players[3];
         // 替身变量 用于绕过 Grabability (obj as Player).SlugCatClass == MoreSlugcatsEnums.SlugcatStatsName.Slugpup 检测
         // 不能更改 SlugCatClass 一，是因为这代表职业 二，是因为强行改为Slugpup会卡死游戏
-        private DataPearl _dataPearl = (DataPearl)FormatterServices.GetUninitializedObject(typeof(DataPearl));
+        private DataPearl _dataPearl = (DataPearl)FormatterServices.GetUninitializedObject(typeof(DataPearl)); 
         // 当前是否处于官方的Standard过场动画中？
         private bool _isOfficalInCutsceneStandard = false;
         // 当前是否处于本模组的Standard过场动画(镜头修复)中？
         private bool _isMineInCutsceneStandard = false;
-        // 手动维护PlayerNPCState
-        private Dictionary<int,PlayerNPCState> _playerNPCStateMap;
         private CreatureTemplate _origCreatureTemplate;
 
         public bool isAIApplyToPlayer1 = false;
@@ -33,6 +37,7 @@ namespace SlugcatDriver.Tool
         public int idPlayer3 = 2;
         public bool isAIApplyToPlayer4 = false;
         public int idPlayer4 = 3;
+        public bool isJollyDifficultyLockedToEASY;
         private void Awake()
         {
             if (Instance != null && Instance != this)
@@ -42,9 +47,6 @@ namespace SlugcatDriver.Tool
             }
             Instance = this;
             DontDestroyOnLoad(gameObject);
-            playerMap = new Dictionary<int, Player>();
-            playerNumMap = new Dictionary<Player, int>();
-            _playerNPCStateMap = new Dictionary<int, PlayerNPCState>();
         }
 
         private void OnDestroy()
@@ -60,9 +62,7 @@ namespace SlugcatDriver.Tool
         public void InitDpcat()
         {
             if(isInited || !GameplayReady()) return;
-            playerMap?.Clear();     // 前置清理，放在这以避免在需要用的时候被Clear()清空
-            playerNumMap?.Clear();  // 因为我们很难判断Clear会在何时执行
-            
+
             DpcatMeowConfig dpcatMeowConfig = DpcatMeowConfig.Instance;
             if(dpcatMeowConfig != null)
             {
@@ -74,73 +74,61 @@ namespace SlugcatDriver.Tool
                 idPlayer2 = dpcatMeowConfig.idPlayer2.Value;
                 idPlayer3 = dpcatMeowConfig.idPlayer3.Value;
                 idPlayer4 = dpcatMeowConfig.idPlayer4.Value;
+                isJollyDifficultyLockedToEASY = dpcatMeowConfig.isJollyDifficultyLockedToEASY.Value;
             }
             if (isAIApplyToPlayer1)
-                InitDpcatByNumber(1);
+                InitDpcatByNumber(_ac1, idPlayer1);
             if (isAIApplyToPlayer2)
-                InitDpcatByNumber(2);
+                InitDpcatByNumber(_ac2, idPlayer2);
             if (isAIApplyToPlayer3)
-                InitDpcatByNumber(3);
+                InitDpcatByNumber(_ac3, idPlayer3);
             if (isAIApplyToPlayer4)
-                InitDpcatByNumber(4);
+                InitDpcatByNumber(_ac4, idPlayer4);
             
             isInited = true;
         }
-        private void InitDpcatByNumber(int num)
+        private void InitDpcatByNumber(AbstractCreature ac,int id)
         {
-            if(num < 1 || num > 4 || playerMap == null || playerNumMap == null) return;
-            Player? p = SlugcatLocator.GetPlayerBySlot(num); // 从1开始
-            AbstractCreature? ac = p?.abstractCreature;
-            if(p == null || ac == null || p.room == null || !p.room.readyForAI || p.room.aimap == null /**|| !(ac.realizedCreature is Player)**/)
-            {
-                return;
-            }
-            playerMap.Add(num,p);
-            playerNumMap.Add(p,num);
+            Player? p = ac.realizedCreature as Player; // 从1开始
+            if(ac == null || p == null || p.room == null || !p.room.readyForAI || p.room.aimap == null) return;
+
             if(_origCreatureTemplate == null) _origCreatureTemplate = ac.creatureTemplate;
+
+            // var g = ac.Room?.world.game; // 访问game的一种方式
             // 1) 先换模板
             // creatureTemplate.AI 变 true AbstractCreature.cs:833 的抽象目的地/路径维护才会跑
             // Player.isNPC 变 true Player.cs:1957-1966 → 相机/HUD 的 NPC 分支对齐
             ac.creatureTemplate = StaticWorld.GetCreatureTemplate(MoreSlugcatsEnums.CreatureTemplateType.SlugNPC);
-            // 2) 再换ID
-            int id = num switch
-            {
-                1 => idPlayer1,
-                2 => idPlayer2,
-                3 => idPlayer3,
-                4 => idPlayer4,
-                _ => 0,
-            };
+
+            // 2) 再换性格
             ac.ID = new EntityID(-1,id);
             ac.personality = new AbstractCreature.Personality(ac.ID);
+
             // 3) 再建 state —— 顺序反了 socialMemory 仍然是 null（CreatureState.cs:35）
-            if(!_playerNPCStateMap.TryGetValue(num,out PlayerNPCState playerNPCState))
-            {
-                int onlyPlayerNumber = -1;
-                if (!isAIApplyToPlayer1)
-                    onlyPlayerNumber = 0;
-                else if (!isAIApplyToPlayer2)
-                    onlyPlayerNumber = 1;
-                else if (!isAIApplyToPlayer3)
-                    onlyPlayerNumber = 2;
-                else if (!isAIApplyToPlayer4)
-                    onlyPlayerNumber = 3;
-                int playerNumber = p.playerState != null ? p.playerState.playerNumber : 0;
-                var st = new PlayerNPCState(ac, playerNumber);      // PlayerNPCState : PlayerState（PlayerNPCState.cs:7/27） 这一行只继承ac
-                st.isPup = p.playerState != null && p.playerState.isPup; // 继承体型
-                st.slugcatCharacter = p.playerState != null ? p.playerState.slugcatCharacter : p.SlugCatClass; // 继承名字(惬意合作 这个名字也决定相关样式 不继承样式会出问题)
-                st.foodInStomach = 1; // 初始饱食度
-                SocialMemory.Relationship orInitiateRelationship = st.socialMemory.GetOrInitiateRelationship(p.room.game.Players[onlyPlayerNumber == -1 ? 0 : onlyPlayerNumber].ID); // 初始化与玩家的关系，返回的是引用
-                orInitiateRelationship.InfluenceLike(1f); // 因子(影响权重)
-                orInitiateRelationship.InfluenceTempLike(1f); // 因子(影响权重)
-                orInitiateRelationship.like = 0.52f; // 超过0.5就是朋友 like > 0.5 && tempLike > 0.5
-                orInitiateRelationship.tempLike = 0.52f; // 超过0.5就是朋友  like > 0.5 && tempLike > 0.5
-                ac.state = st;
-            }
-            else
-            {
-                ac.state = playerNPCState;
-            }
+            int onlyPlayerNumber = -1;
+            if (!isAIApplyToPlayer1)
+                onlyPlayerNumber = 0;
+            else if (!isAIApplyToPlayer2)
+                onlyPlayerNumber = 1;
+            else if (!isAIApplyToPlayer3)
+                onlyPlayerNumber = 2;
+            else if (!isAIApplyToPlayer4)
+                onlyPlayerNumber = 3;
+
+            int playerNumber = p.playerState != null ? p.playerState.playerNumber : 0;
+
+            var st = new PlayerNPCState(ac, playerNumber);      // PlayerNPCState : PlayerState（PlayerNPCState.cs:7/27） 这一行只继承ac
+            st.isPup = p.playerState != null && p.playerState.isPup; // 继承体型
+            st.slugcatCharacter = p.playerState != null ? p.playerState.slugcatCharacter : p.SlugCatClass; // 继承名字(惬意合作 这个名字也决定相关样式 不继承样式会出问题)
+            st.foodInStomach = 1; // 初始饱食度
+            
+            SocialMemory.Relationship orInitiateRelationship = st.socialMemory.GetOrInitiateRelationship(p.room.game.Players[onlyPlayerNumber == -1 ? 0 : onlyPlayerNumber].ID); // 初始化与玩家的关系，返回的是引用
+            orInitiateRelationship.InfluenceLike(1f); // 因子(影响权重)
+            orInitiateRelationship.InfluenceTempLike(1f); // 因子(影响权重)
+            orInitiateRelationship.like = 1f; // 超过0.5就是朋友 like > 0.5 && tempLike > 0.5
+            orInitiateRelationship.tempLike = 1f; // 超过0.5就是朋友  like > 0.5 && tempLike > 0.5
+            
+            ac.state = st;
 
             // 4) 抽象层：用 pup 专用的 SlugNPCAbstractAI（自带 isTamed/跟随/回巢；普通 AbstractCreatureAI 缺这些）
             ac.abstractAI = new SlugNPCAbstractAI(ac.world, ac);
@@ -151,6 +139,8 @@ namespace SlugcatDriver.Tool
             // 6) 补 realizedRoom（PathFinder.cs:797 → Reset(): realizedRoom = room） 没有这个会崩
             ac.abstractAI.RealAI.NewRoom(p.room);        // PathFinder.cs:797 → Reset(): realizedRoom = room（:808）
         }
+        private delegate List<AbstractCreature> orig_getter_RainWorldGamePlayersToProgressOrWin(RainWorldGame self);
+        private Hook hook_getter_RainWorldGamePlayersToProgressOrWin;
         public void DpcatMeowPatch()
         {
             // 修复‘猫崽把玩家当物品抓’
@@ -173,7 +163,17 @@ namespace SlugcatDriver.Tool
             On.JollyCoop.JollyHUD.JollyMeter.Update += new On.JollyCoop.JollyHUD.JollyMeter.hook_Update(JollyMeterUpdatePatch);
             // 修复‘官方相机只能在自己和下一位之间轮换’
             On.Player.TriggerCameraSwitch += new On.Player.hook_TriggerCameraSwitch(PlayerTriggerCameraSwitchPatch);
-            
+            // 修复‘猫崽过管道后概率变身’
+            On.AbstractCreature.Realize += new On.AbstractCreature.hook_Realize(AbstractCreatureRealizePatch);
+            // 双保险：任何路径重建 我们的猫崽 都不会丢职业
+            On.Player.GetInitialSlugcatClass += new On.Player.hook_GetInitialSlugcatClass(PlayerGetInitialSlugcatClassPatch);
+            // 修复‘猫崽死亡不回家不能雨眠’ 强制无视惬意合作难度
+            var getter_RainWorldGamePlayersToProgressOrWin = typeof(RainWorldGame).GetProperty("PlayersToProgressOrWin",BindingFlags.Instance | BindingFlags.Public).GetGetMethod();
+            hook_getter_RainWorldGamePlayersToProgressOrWin = new Hook(getter_RainWorldGamePlayersToProgressOrWin,(orig_getter_RainWorldGamePlayersToProgressOrWin orig,RainWorldGame self) =>
+            {
+                if(isJollyDifficultyLockedToEASY) Custom.rainWorld.options.jollyDifficulty = Options.JollyDifficulty.EASY;
+                return orig.Invoke(self);
+            });
         }
         private static bool SlugNPCAICanGrabItemPatch(On.MoreSlugcats.SlugNPCAI.orig_CanGrabItem orig, MoreSlugcats.SlugNPCAI self, PhysicalObject obj)
         {
@@ -183,7 +183,7 @@ namespace SlugcatDriver.Tool
         {
             Player? targetPlayer = obj as Player;
             // 抓猫崽时执行（仅本模组猫崽）因为本模组猫崽SlugCatClass不是Slugpup，导致原函数这段代码不会执行，此为修复补丁
-            if(targetPlayer != null && self != targetPlayer && !(self.abstractCreature?.abstractAI?.RealAI is SlugNPCAI) && playerMap != null && playerMap.ContainsValue(targetPlayer))
+            if(targetPlayer != null && self != targetPlayer && !(self.abstractCreature?.abstractAI?.RealAI is SlugNPCAI) && IsMineSlugNPC(targetPlayer.abstractCreature))
             {
                 if (self.slugOnBack != null && self.slugOnBack.slugcat == obj)
                 {
@@ -215,7 +215,7 @@ namespace SlugcatDriver.Tool
         }
         private void RoomCameraChangeCameraToPlayerPatch(On.RoomCamera.orig_ChangeCameraToPlayer orig, RoomCamera self, AbstractCreature cameraTarget)
         {
-            if(cameraTarget.abstractAI?.RealAI is SlugNPCAI && IsSlugNPCInPlayerMap(cameraTarget))
+            if(cameraTarget.abstractAI?.RealAI is SlugNPCAI && IsMineSlugNPC(cameraTarget))
             {
                 _isMineInCutsceneStandard = true;
                 self.EnterCutsceneMode(cameraTarget,RoomCamera.CameraCutsceneType.Standard);
@@ -229,7 +229,7 @@ namespace SlugcatDriver.Tool
         }
         private void RoomCameraEnterCutsceneModePatch(On.RoomCamera.orig_EnterCutsceneMode orig, RoomCamera self, AbstractCreature cutscenePlayer, RoomCamera.CameraCutsceneType type)
         {
-            if(IsSlugNPCInPlayerMap(cutscenePlayer))
+            if(IsMineSlugNPC(cutscenePlayer))
             {
                 orig.Invoke(self,cutscenePlayer,type);
                 return;
@@ -271,7 +271,7 @@ namespace SlugcatDriver.Tool
         }
         private void PlayerUpdatePatch(On.Player.orig_Update orig, Player self, bool eu)
         {
-            if (playerMap.ContainsValue(self))
+            if (IsMineSlugNPC(self.abstractCreature))
             {
                 // 我们的蛞蝓猫会因为 AI != null 而不执行下列代码，因此，手动修复
                 if(self.room.abstractRoom.shelter && self.room.game.IsStorySession && !self.dead && !self.Sleeping && self.room.shelterDoor != null && !self.room.shelterDoor.Broken)
@@ -283,13 +283,6 @@ namespace SlugcatDriver.Tool
                         {
                             // self.ReadyForWinJolly = true; // 私有属性
                             typeof(Player).GetProperty("ReadyForWinJolly",BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic).SetValue(self,true);
-                            PlayerNPCState? playerNPCState = self.abstractCreature.state as PlayerNPCState;
-                            
-                            if(playerNPCState != null && playerNumMap != null && playerNumMap.TryGetValue(self,out int num) && _playerNPCStateMap != null && _playerNPCStateMap.TryGetValue(num,out _))
-                            {
-                                playerNPCState.foodInStomach = playerNPCState.foodInStomach - self.slugcatStats.foodToHibernate;
-                                _playerNPCStateMap[num] = playerNPCState;
-                            }
                         }
                     }
                 }
@@ -300,13 +293,13 @@ namespace SlugcatDriver.Tool
         {
             // 换成源模板，这样 abstractCreature.creatureTemplate.TopAncestor().type == MoreSlugcatsEnums.CreatureTemplateType.SlugNPC 就不成立
             // 如此，我们的猫崽就不会当做NPC加入下循环的猫崽生成列表中
-            if (isAIApplyToPlayer1 && playerMap != null && playerMap.TryGetValue(1,out Player p1))
+            if (isAIApplyToPlayer1 && _ac1 != null && _ac1.realizedCreature is Player p1)
                 p1.abstractCreature.creatureTemplate = _origCreatureTemplate;
-            if (isAIApplyToPlayer2 && playerMap != null && playerMap.TryGetValue(2,out Player p2))
+            if (isAIApplyToPlayer2 && _ac2 != null && _ac2.realizedCreature is Player p2)
                 p2.abstractCreature.creatureTemplate = _origCreatureTemplate;
-            if (isAIApplyToPlayer3 && playerMap != null && playerMap.TryGetValue(3,out Player p3))
+            if (isAIApplyToPlayer3 && _ac3 != null && _ac3.realizedCreature is Player p3)
                 p3.abstractCreature.creatureTemplate = _origCreatureTemplate;
-            if (isAIApplyToPlayer4 && playerMap != null && playerMap.TryGetValue(4,out Player p4))
+            if (isAIApplyToPlayer4 && _ac4 != null && _ac4.realizedCreature is Player p4)
                 p4.abstractCreature.creatureTemplate = _origCreatureTemplate;
             orig.Invoke(self,playerShelter,activeGate);
         }
@@ -314,6 +307,7 @@ namespace SlugcatDriver.Tool
         private void PlayerIconUpdatePatch(On.JollyCoop.JollyHUD.JollyMeter.PlayerIcon.orig_Update orig, JollyCoop.JollyHUD.JollyMeter.PlayerIcon self)
         {
             orig.Invoke(self);
+            // 修复图标不复活问题
             PlayerState playerState = (PlayerState)typeof(JollyCoop.JollyHUD.JollyMeter.PlayerIcon).GetProperty("playerState",BindingFlags.NonPublic | BindingFlags.Instance).GetValue(self);
             bool dead = (bool)typeof(JollyCoop.JollyHUD.JollyMeter.PlayerIcon).GetField("dead",BindingFlags.NonPublic | BindingFlags.Instance).GetValue(self);
             if (dead && !playerState.permaDead && !playerState.dead)
@@ -329,6 +323,7 @@ namespace SlugcatDriver.Tool
         private void JollyMeterUpdatePatch(On.JollyCoop.JollyHUD.JollyMeter.orig_Update orig, JollyCoop.JollyHUD.JollyMeter self)
         {
             orig.Invoke(self);
+            // 将锁图标重置为箭头图标
             if(_isMineInCutsceneStandard && !_isOfficalInCutsceneStandard)
             {
                 FSprite cameraArrowSprite = (FSprite)typeof(JollyCoop.JollyHUD.JollyMeter).GetField("cameraArrowSprite",BindingFlags.NonPublic | BindingFlags.Instance).GetValue(self);
@@ -345,13 +340,19 @@ namespace SlugcatDriver.Tool
                 {
                     int count = self.abstractCreature.world.game.session.Players.Count();
                     int baseIndex = self.playerState.playerNumber;
-                    for(int index =  1; index < count; index++)
+                    int deadCount = 0;
+                    for(int index = 1; index < count; index++)
                     {
                         int i = (baseIndex + index) % count;
-                        AbstractCreature ac = self.abstractCreature.world.game.Players[i];
-                        if(ac != roomCamera.followAbstractCreature && ac.state.alive)
+                        AbstractCreature ac = self.abstractCreature.world.game.Players[i - 1 - deadCount < 0 ? count - 1 - deadCount : i - 1 - deadCount];
+                        if(ac == roomCamera.followAbstractCreature)
                         {
-                            AbstractCreature cameraTarget = self.abstractCreature.world.game.Players[index];
+                            AbstractCreature cameraTarget = self.abstractCreature.world.game.Players[i];
+                            if (!cameraTarget.state.alive)
+                            {
+                                deadCount++;
+                                continue;
+                            }
                             roomCamera.ChangeCameraToPlayer(cameraTarget);
                             return;
                         }
@@ -359,6 +360,35 @@ namespace SlugcatDriver.Tool
                 }
             }
             orig.Invoke(self);
+        }
+        private void AbstractCreatureRealizePatch(On.AbstractCreature.orig_Realize orig, AbstractCreature self)
+        {
+            if (!IsMineSlugNPC(self))
+            {
+                orig.Invoke(self);
+                return;
+            }
+
+            CreatureTemplate npc = self.creatureTemplate;
+            CreatureTemplate original = _origCreatureTemplate != null ? _origCreatureTemplate : StaticWorld.GetCreatureTemplate("Slugcat");
+
+            self.creatureTemplate = original;      // ← 关键：让 GetInitialSlugcatClass 走 jolly 分支
+            orig.Invoke(self);
+
+            self.creatureTemplate = npc;           // ← 换回来（AI/抽象寻路/模板判定）
+
+            // InitiateAI() 在 Slugcat 模板下什么都没建，这里补上
+            if (self.abstractAI != null && self.abstractAI.RealAI == null)
+                self.abstractAI.RealAI = new SlugNPCAI(self, self.world);   // ctor 自己会写 abstractAI.RealAI（SlugNPCAI.cs:442）
+
+            // state / ID / personality / abstractAI 一律不要动
+        }
+        private void PlayerGetInitialSlugcatClassPatch(On.Player.orig_GetInitialSlugcatClass orig, Player self)
+        {
+            orig.Invoke(self);
+            if (!IsMineSlugNPC(self.abstractCreature)) return;
+            var opts = Custom.rainWorld.options.jollyPlayerOptionsArray[self.playerState.playerNumber];
+            self.SlugCatClass = opts.PlayerClass ?? self.abstractCreature.world.game.StoryCharacter;
         }
         internal static bool GameplayReady()
         {
@@ -389,18 +419,17 @@ namespace SlugcatDriver.Tool
             if (cam.InCutscene) return false;
             return true;
         }
-        private bool IsSlugNPCInPlayerMap(AbstractCreature ac)
+        private bool IsMineSlugNPC(AbstractCreature ac)
         {
-            bool result = false;
-            if (isAIApplyToPlayer1 && playerMap != null && playerMap.TryGetValue(1,out Player p1))
-                result = result || p1.abstractCreature == ac;
-            if (isAIApplyToPlayer2 && playerMap != null && playerMap.TryGetValue(2,out Player p2))
-                result = result || p2.abstractCreature == ac;
-            if (isAIApplyToPlayer3 && playerMap != null && playerMap.TryGetValue(3,out Player p3))
-                result = result || p3.abstractCreature == ac;
-            if (isAIApplyToPlayer4 && playerMap != null && playerMap.TryGetValue(4,out Player p4))
-                result = result || p4.abstractCreature == ac;
-            return result;
+            if (isAIApplyToPlayer1 && _ac1 == ac)
+                return true;
+            if (isAIApplyToPlayer2 && _ac2 == ac)
+                return true;
+            if (isAIApplyToPlayer3 && _ac3 == ac)
+                return true;
+            if (isAIApplyToPlayer4 && _ac4 == ac)
+                return true;
+            return false;
         }
         
     }
